@@ -45,7 +45,6 @@ LANGS = [  # total, public, private, per day
     '[ {} commits · {} openbaar · {} privé · Ø {}/dag ]',
 ]
 TYPE, DELETE, PAUSE, GAP = 55, 25, 2500, 300  # ms per typed char, per deleted char, hold, gap
-FONT_SIZE, CHAR_W = 13, 13 * 0.6  # JetBrains Mono advance is 0.6em
 
 def _font_css():
     ranges = {  # unicode ranges as published by @fontsource/jetbrains-mono
@@ -61,17 +60,16 @@ def _font_css():
     return css
 FONT_CSS = _font_css()
 
-def typing(stats, cx, y):
-    pub, priv, avg = stats
-    lines = [l.format(pub + priv, pub, priv, f'{avg:.1f}') for l in LANGS]
+def typing(lines, cx, y, size=13):
+    char_w = size * 0.6  # JetBrains Mono advance is 0.6em
     slots = [len(l) * TYPE + PAUSE + len(l) * DELETE + GAP for l in lines]
     cycle = sum(slots)
     pct = lambda ms: f'{ms / cycle * 100:.3f}'.rstrip('0').rstrip('.') + '%'
-    css = (f'.tt{{font-family:jbm,ui-monospace,monospace;font-size:{FONT_SIZE}px;fill:var(--c4);white-space:pre}}'
+    css = (f'.tt{{font-family:jbm,ui-monospace,monospace;font-size:{size}px;fill:var(--c4);white-space:pre}}'
            f'.tc,.tk{{transform-box:fill-box;transform-origin:0 0;animation:none {cycle}ms infinite}}.tk{{fill:var(--cs)}}')
     out, start = [], 0
     for i, (line, slot) in enumerate(zip(lines, slots)):
-        n, w = len(line), len(line) * CHAR_W
+        n, w = len(line), len(line) * char_w
         x0 = cx - w / 2
         a, b = start, start + n * TYPE
         c, d = b + PAUSE, b + PAUSE + n * DELETE
@@ -82,11 +80,35 @@ def typing(stats, cx, y):
                 f'@keyframes tk{i}{{0%,{pct(a)}{{opacity:0}}{pct(a)}{{opacity:1;transform:translateX(0);animation-timing-function:steps({n},end)}}'
                 f'{pct(b)},{pct(c)}{{opacity:1;transform:translateX({w:.1f}px);animation-timing-function:steps({n},end)}}'
                 f'{pct(d)}{{opacity:1;transform:translateX(0)}}{pct(d + 1)},100%{{opacity:0}}}}.tk{i}{{animation-name:tk{i}}}')
-        out.append(f'<clipPath id="tp{i}"><rect class="tc tc{i}" x="{x0:.1f}" y="{y - FONT_SIZE}" width="{w:.1f}" height="{FONT_SIZE + 4}"/></clipPath>'
+        out.append(f'<clipPath id="tp{i}"><rect class="tc tc{i}" x="{x0:.1f}" y="{y - size}" width="{w:.1f}" height="{size + 4}"/></clipPath>'
                    f'<text class="tt" x="{x0:.1f}" y="{y}" clip-path="url(#tp{i})">{line}</text>'
-                   f'<rect class="tk tk{i}" x="{x0:.1f}" y="{y - FONT_SIZE + 1}" width="2" height="{FONT_SIZE + 2}" opacity="0"/>')
+                   f'<rect class="tk tk{i}" x="{x0:.1f}" y="{y - size + 1}" width="2" height="{size + 2}" opacity="0"/>')
         start += slot
     return f'<style>{css}</style>' + ''.join(out)
+
+def stats_lines(stats):
+    pub, priv, avg = stats
+    return [l.format(pub + priv, pub, priv, f'{avg:.1f}') for l in LANGS]
+
+INTRO = [
+    "Hey, I'm Kev. Developer from Austria.",
+    'Hey, ich bin Kev. Developer aus Österreich.',
+    'Hola, soy Kev. Desarrollador de Austria.',
+    "Salut, je suis Kev. Développeur d'Autriche.",
+    'Olá, eu sou o Kev. Desenvolvedor da Áustria.',
+    "Ciao, sono Kev. Sviluppatore dall'Austria.",
+    'Привет, я Кев. Разработчик из Австрии.',
+    'Cześć, jestem Kev. Programista z Austrii.',
+    "Merhaba, ben Kev. Avusturya'dan geliştirici.",
+    'Hoi, ik ben Kev. Developer uit Oostenrijk.',
+]
+
+def intro(snake_path):
+    """Typed intro line next to the snake svg, in the same colors (snake.svg -> intro.svg)."""
+    colors = re.search(r'--cs:[^;]+;.*?--c4:[^;}]+', open(snake_path).read()).group(0)
+    svg = (f'<svg viewBox="0 0 880 44" width="880" height="44" xmlns="http://www.w3.org/2000/svg">'
+           f'<style>:root{{{colors}}}{FONT_CSS}</style>' + typing(INTRO, 440, 30, size=22) + '</svg>')
+    open(snake_path.replace('snake', 'intro'), 'w').write(svg)
 
 def process(path, stats):
     svg = open(path).read()
@@ -174,10 +196,11 @@ def process(path, stats):
     first_snake = svg.index('<rect class="s')
     svg = svg[:first_snake] + ''.join(rects) + '<g class="sn">' + svg[first_snake:].replace('</svg>', '</g></svg>')
     if stats:  # commit counter under the grid, typed out in different languages
-        svg = svg.replace('<g class="sn">', typing(stats, vx + vw / 2, text_y) + '<g class="sn">', 1)
+        svg = svg.replace('<g class="sn">', typing(stats_lines(stats), vx + vw / 2, text_y) + '<g class="sn">', 1)
         svg = svg.replace('</style>', FONT_CSS + '</style>', 1)
     open(path, 'w').write(svg)
 
 stats = commit_stats()
 for f in sys.argv[1:]:
     process(f, stats)
+    intro(f)
