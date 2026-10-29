@@ -25,6 +25,8 @@ jobs:
             dist/snake-dark.svg?color_snake=#f0abfc&color_dots=#161b22,#4a1d5c,#86198f,#d946ef,#f9a8d4
 
       - run: python3 gol.py dist/*.svg
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: crazy-max/ghaction-github-pages@v3.1.0
         with:

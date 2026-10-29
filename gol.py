@@ -1,19 +1,50 @@
 """Post-process snk SVGs: drop the progress bar, then play Conway's Game of Life
 on the contribution grid once the snake is done. Usage: python3 gol.py dist/*.svg"""
-import random, re, sys, datetime
+import random, re, sys, datetime, json, os, urllib.request
 
 GENS = 40          # generations to play
 STEP = 200         # ms per generation
 HOLD = 1500        # ms to hold the last generation before the loop restarts
 DENSITY = 0.3      # top up the seed with random cells up to this density
 
-def process(path):
+def commit_stats():
+    """All-time commit stats via GraphQL: (public commits, private contributions, per day)."""
+    token, login = os.environ.get('GITHUB_TOKEN'), os.environ.get('GITHUB_REPOSITORY_OWNER')
+    if not token or not login:
+        return None
+    def gql(query, **variables):
+        req = urllib.request.Request('https://api.github.com/graphql',
+            json.dumps({'query': query, 'variables': variables}).encode(),
+            {'Authorization': f'bearer {token}'})
+        return json.load(urllib.request.urlopen(req))['data']['user']
+    created = gql('query($l:String!){user(login:$l){createdAt}}', l=login)['createdAt']
+    start = datetime.datetime.fromisoformat(created.replace('Z', '+00:00'))
+    now = datetime.datetime.now(datetime.timezone.utc)
+    pub = priv = 0
+    frm = start
+    while frm < now:  # the API only allows windows of up to one year
+        to = min(frm + datetime.timedelta(days=365), now)
+        c = gql('query($l:String!,$f:DateTime!,$t:DateTime!){user(login:$l){contributionsCollection(from:$f,to:$t)'
+                '{totalCommitContributions restrictedContributionsCount}}}',
+                l=login, f=frm.isoformat(), t=to.isoformat())['contributionsCollection']
+        pub += c['totalCommitContributions']
+        priv += c['restrictedContributionsCount']
+        frm = to
+    return pub, priv, (pub + priv) / max(1, (now - start).days)
+
+def process(path, stats):
     svg = open(path).read()
 
     # 1. remove the progress bar and crop it out of the viewBox
     svg = re.sub(r'<rect class="u[^"]*"[^>]*/>', '', svg)
     vx, vy, vw, vh = map(float, re.search(r'viewBox="([^"]+)"', svg).group(1).split())
     bottom = max(int(y) for y in re.findall(r'<rect class="c[^"]*" x="\d+" y="(\d+)"', svg)) + 12 + 16
+    if stats:  # commit counter under the grid
+        pub, priv, avg = stats
+        svg = svg.replace('<rect class="s', f'<text x="{vx + vw / 2:g}" y="{bottom + 8}" text-anchor="middle" '
+            f'font-family="ui-monospace,monospace" font-size="13" fill="var(--c4)">'
+            f'[ {pub + priv} commits · {pub} public · {priv} private · ⌀ {avg:.1f}/day ]</text><rect class="s', 1)
+        bottom += 24
     vh = bottom - vy
     svg = re.sub(r'viewBox="[^"]+" width="(\d+)" height="\d+"',
                  lambda m: f'viewBox="{vx:g} {vy:g} {vw:g} {vh:g}" width="{m.group(1)}" height="{vh:g}"', svg, count=1)
@@ -91,5 +122,6 @@ def process(path):
     svg = svg[:first_snake] + ''.join(rects) + '<g class="sn">' + svg[first_snake:].replace('</svg>', '</g></svg>')
     open(path, 'w').write(svg)
 
+stats = commit_stats()
 for f in sys.argv[1:]:
-    process(f)
+    process(f, stats)
