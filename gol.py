@@ -1,6 +1,6 @@
 """Post-process snk SVGs: drop the progress bar, then play Conway's Game of Life
 on the contribution grid once the snake is done. Usage: python3 gol.py dist/*.svg"""
-import random, re, sys, datetime, json, os, urllib.request
+import base64, random, re, sys, datetime, json, os, urllib.request
 
 GENS = 40          # generations to play
 STEP = 200         # ms per generation
@@ -32,6 +32,62 @@ def commit_stats():
         frm = to
     return pub, priv, (pub + priv) / max(1, (now - start).days)
 
+LANGS = [  # total, public, private, per day
+    '[ {} commits · {} public · {} private · Ø {}/day ]',
+    '[ {} Commits · {} öffentlich · {} privat · Ø {}/Tag ]',
+    '[ {} commits · {} públicos · {} privados · Ø {}/día ]',
+    '[ {} commits · {} publics · {} privés · Ø {}/jour ]',
+    '[ {} commits · {} públicos · {} privados · Ø {}/dia ]',
+    '[ {} commit · {} pubblici · {} privati · Ø {}/giorno ]',
+    '[ {} коммитов · {} публичных · {} приватных · Ø {}/день ]',
+    '[ {} commitów · {} publicznych · {} prywatnych · Ø {}/dzień ]',
+    '[ {} commit · {} herkese açık · {} gizli · Ø {}/gün ]',
+    '[ {} commits · {} openbaar · {} privé · Ø {}/dag ]',
+]
+TYPE, DELETE, PAUSE, GAP = 55, 25, 2500, 300  # ms per typed char, per deleted char, hold, gap
+FONT_SIZE, CHAR_W = 13, 13 * 0.6  # JetBrains Mono advance is 0.6em
+
+def _font_css():
+    ranges = {  # unicode ranges as published by @fontsource/jetbrains-mono
+        'latin': 'U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+2074,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD',
+        'latin-ext': 'U+0100-02AF,U+0304,U+0308,U+0329,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF',
+        'cyrillic': 'U+0301,U+0400-045F,U+0490-0491,U+04B0-04B1,U+2116',
+    }
+    here = os.path.dirname(os.path.abspath(__file__))
+    css = ''
+    for name, rng in ranges.items():
+        data = base64.b64encode(open(f'{here}/fonts/jetbrains-mono-{name}.woff2', 'rb').read()).decode()
+        css += f"@font-face{{font-family:jbm;src:url(data:font/woff2;base64,{data}) format('woff2');unicode-range:{rng}}}"
+    return css
+FONT_CSS = _font_css()
+
+def typing(stats, cx, y):
+    pub, priv, avg = stats
+    lines = [l.format(pub + priv, pub, priv, f'{avg:.1f}') for l in LANGS]
+    slots = [len(l) * TYPE + PAUSE + len(l) * DELETE + GAP for l in lines]
+    cycle = sum(slots)
+    pct = lambda ms: f'{ms / cycle * 100:.3f}'.rstrip('0').rstrip('.') + '%'
+    css = (f'.tt{{font-family:jbm,ui-monospace,monospace;font-size:{FONT_SIZE}px;fill:var(--c4);white-space:pre}}'
+           f'.tc,.tk{{transform-box:fill-box;transform-origin:0 0;animation:none {cycle}ms infinite}}.tk{{fill:var(--cs)}}')
+    out, start = [], 0
+    for i, (line, slot) in enumerate(zip(lines, slots)):
+        n, w = len(line), len(line) * CHAR_W
+        x0 = cx - w / 2
+        a, b = start, start + n * TYPE
+        c, d = b + PAUSE, b + PAUSE + n * DELETE
+        # clip grows char by char, holds, shrinks char by char; cursor follows its edge
+        css += (f'@keyframes tc{i}{{0%,{pct(a)}{{transform:scaleX(0);animation-timing-function:steps({n},end)}}'
+                f'{pct(b)},{pct(c)}{{transform:scaleX(1);animation-timing-function:steps({n},end)}}'
+                f'{pct(d)},100%{{transform:scaleX(0)}}}}.tc{i}{{animation-name:tc{i}}}'
+                f'@keyframes tk{i}{{0%,{pct(a)}{{opacity:0}}{pct(a)}{{opacity:1;transform:translateX(0);animation-timing-function:steps({n},end)}}'
+                f'{pct(b)},{pct(c)}{{opacity:1;transform:translateX({w:.1f}px);animation-timing-function:steps({n},end)}}'
+                f'{pct(d)}{{opacity:1;transform:translateX(0)}}{pct(d + 1)},100%{{opacity:0}}}}.tk{i}{{animation-name:tk{i}}}')
+        out.append(f'<clipPath id="tp{i}"><rect class="tc tc{i}" x="{x0:.1f}" y="{y - FONT_SIZE}" width="{w:.1f}" height="{FONT_SIZE + 4}"/></clipPath>'
+                   f'<text class="tt" x="{x0:.1f}" y="{y}" clip-path="url(#tp{i})">{line}</text>'
+                   f'<rect class="tk tk{i}" x="{x0:.1f}" y="{y - FONT_SIZE + 1}" width="2" height="{FONT_SIZE + 2}" opacity="0"/>')
+        start += slot
+    return f'<style>{css}</style>' + ''.join(out)
+
 def process(path, stats):
     svg = open(path).read()
 
@@ -39,11 +95,8 @@ def process(path, stats):
     svg = re.sub(r'<rect class="u[^"]*"[^>]*/>', '', svg)
     vx, vy, vw, vh = map(float, re.search(r'viewBox="([^"]+)"', svg).group(1).split())
     bottom = max(int(y) for y in re.findall(r'<rect class="c[^"]*" x="\d+" y="(\d+)"', svg)) + 12 + 16
-    if stats:  # commit counter under the grid
-        pub, priv, avg = stats
-        svg = svg.replace('<rect class="s', f'<text x="{vx + vw / 2:g}" y="{bottom + 8}" text-anchor="middle" '
-            f'font-family="ui-monospace,monospace" font-size="13" fill="var(--c4)">'
-            f'[ {pub + priv} commits · {pub} public · {priv} private · ⌀ {avg:.1f}/day ]</text><rect class="s', 1)
+    text_y = bottom + 8
+    if stats:
         bottom += 24
     vh = bottom - vy
     svg = re.sub(r'viewBox="[^"]+" width="(\d+)" height="\d+"',
@@ -120,6 +173,9 @@ def process(path, stats):
     svg = svg.replace('</style>', ''.join(css) + '</style>', 1)
     first_snake = svg.index('<rect class="s')
     svg = svg[:first_snake] + ''.join(rects) + '<g class="sn">' + svg[first_snake:].replace('</svg>', '</g></svg>')
+    if stats:  # commit counter under the grid, typed out in different languages
+        svg = svg.replace('<g class="sn">', typing(stats, vx + vw / 2, text_y) + '<g class="sn">', 1)
+        svg = svg.replace('</style>', FONT_CSS + '</style>', 1)
     open(path, 'w').write(svg)
 
 stats = commit_stats()
