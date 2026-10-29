@@ -83,9 +83,12 @@ def process(path):
             css.append(f'@keyframes {frames[body]}{{{body}}}.g.{frames[body]}{{animation-name:{frames[body]}}}')
         rects.append(f'<rect class="g {frames[body]}" x="{x}" y="{y}" rx="2" ry="2"/>')
 
+    # hide the snake while the game of life runs
+    css.append(f'@keyframes sn{{0%{{opacity:1}}{pct(t)},100%{{opacity:0}}}}.sn{{animation:sn {total}ms step-end infinite}}')
+
     svg = svg.replace('</style>', ''.join(css) + '</style>', 1)
     first_snake = svg.index('<rect class="s')
-    svg = svg[:first_snake] + ''.join(rects) + svg[first_snake:]
+    svg = svg[:first_snake] + ''.join(rects) + '<g class="sn">' + svg[first_snake:].replace('</svg>', '</g></svg>')
     open(path, 'w').write(svg)
 
 for f in sys.argv[1:]:
