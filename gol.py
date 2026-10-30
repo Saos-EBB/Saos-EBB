@@ -125,7 +125,17 @@ def recolor(svg, dark):
     svg = re.sub(r'--cs:#\w+', f'--cs:{snake}', svg, count=1)
     for i, c in enumerate(dots, 1):
         svg = re.sub(rf'--c{i}:#\w+', f'--c{i}:{c}', svg, count=1)
-    return svg
+    # every hue's dot colors, so each cell can roll its own
+    hues = ''.join(f'--{h}{i}:{c};' for h, pal in PALETTES.items() for i, c in enumerate(pal[dark][1:], 1))
+    return svg.replace(':root{', ':root{' + hues, 1)
+
+def random_hues(svg):
+    """Give every contribution cell one of the hues at random."""
+    rng = random.SystemRandom()
+    def roll(m):
+        h = rng.choice(list(PALETTES))
+        return re.sub(r'var\(--c([1-4])\)', rf'var(--{h}\1)', m.group(0))
+    return re.sub(r'@keyframes (c\w+)\{(?:[^{}]*\{[^}]*\})*\}\.c\.\1\{[^}]*\}', roll, svg)
 
 def stats_lines(stats):
     pub, priv, avg = stats
@@ -191,15 +201,17 @@ def process(path, stats):
         age = nxt
         history.append(dict(age))
 
-    def color(a):  # newborn = brightest, fades with age
-        return f'var(--c{max(1, 5 - a)})' if a else 'transparent'
+    hue_rng = random.SystemRandom()
+    def color(a, hue):  # newborn = brightest, fades with age
+        return f'var(--{hue}{max(1, 5 - a)})' if a else 'transparent'
 
     pct = lambda ms: f'{ms / total * 100:.3f}'.rstrip('0').rstrip('.') + '%'
     css, rects, frames = [f'.g{{width:12px;height:12px;fill:transparent;animation:none {total}ms step-end infinite}}'], [], {}
     for p, (x, y, _) in cells.items():
+        hue = hue_rng.choice(list(PALETTES))
         stops, prev = ['0%{fill:transparent}'], 'transparent'
         for i, gen in enumerate(history):
-            c = color(gen.get(p, 0))
+            c = color(gen.get(p, 0), hue)
             if c != prev:
                 stops.append(f'{pct(t + i * STEP)}{{fill:{c}}}')
                 prev = c
@@ -220,6 +232,7 @@ def process(path, stats):
     svg = svg[:first_snake] + ''.join(rects) + '<g class="sn">' + svg[first_snake:].replace('</svg>', '</g></svg>')
     # intro above the grid, commit counter below it, typed out in different languages
     svg = svg.replace('<g class="sn">', typing(vx + vw / 2, intro_y, text_y, stats and stats_lines(stats)) + '<g class="sn">', 1)
+    svg = random_hues(svg)
     svg = svg.replace('</style>', FONT_CSS + '</style>', 1)
     open(path, 'w').write(svg)
 
