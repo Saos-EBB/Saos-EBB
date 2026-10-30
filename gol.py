@@ -60,36 +60,6 @@ def _font_css():
     return css
 FONT_CSS = _font_css()
 
-def typing(lines, cx, y, size=13):
-    char_w = size * 0.6  # JetBrains Mono advance is 0.6em
-    slots = [len(l) * TYPE + PAUSE + len(l) * DELETE + GAP for l in lines]
-    cycle = sum(slots)
-    pct = lambda ms: f'{ms / cycle * 100:.3f}'.rstrip('0').rstrip('.') + '%'
-    css = (f'.tt{{font-family:jbm,ui-monospace,monospace;font-size:{size}px;fill:var(--c4);white-space:pre}}'
-           f'.tc,.tk{{transform-box:fill-box;transform-origin:0 0;animation:none {cycle}ms infinite}}.tk{{fill:var(--cs)}}')
-    out, start = [], 0
-    for i, (line, slot) in enumerate(zip(lines, slots)):
-        n, w = len(line), len(line) * char_w
-        x0 = cx - w / 2
-        a, b = start, start + n * TYPE
-        c, d = b + PAUSE, b + PAUSE + n * DELETE
-        # clip grows char by char, holds, shrinks char by char; cursor follows its edge
-        css += (f'@keyframes tc{i}{{0%,{pct(a)}{{transform:scaleX(0);animation-timing-function:steps({n},end)}}'
-                f'{pct(b)},{pct(c)}{{transform:scaleX(1);animation-timing-function:steps({n},end)}}'
-                f'{pct(d)},100%{{transform:scaleX(0)}}}}.tc{i}{{animation-name:tc{i}}}'
-                f'@keyframes tk{i}{{0%,{pct(a)}{{opacity:0}}{pct(a)}{{opacity:1;transform:translateX(0);animation-timing-function:steps({n},end)}}'
-                f'{pct(b)},{pct(c)}{{opacity:1;transform:translateX({w:.1f}px);animation-timing-function:steps({n},end)}}'
-                f'{pct(d)}{{opacity:1;transform:translateX(0)}}{pct(d + 1)},100%{{opacity:0}}}}.tk{i}{{animation-name:tk{i}}}')
-        out.append(f'<clipPath id="tp{i}"><rect class="tc tc{i}" x="{x0:.1f}" y="{y - size}" width="{w:.1f}" height="{size + 4}"/></clipPath>'
-                   f'<text class="tt" x="{x0:.1f}" y="{y}" clip-path="url(#tp{i})">{line}</text>'
-                   f'<rect class="tk tk{i}" x="{x0:.1f}" y="{y - size + 1}" width="2" height="{size + 2}" opacity="0"/>')
-        start += slot
-    return f'<style>{css}</style>' + ''.join(out)
-
-def stats_lines(stats):
-    pub, priv, avg = stats
-    return [l.format(pub + priv, pub, priv, f'{avg:.1f}') for l in LANGS]
-
 INTRO = [
     "Hey, I'm Kev. Developer from Austria.",
     'Hey, ich bin Kev. Developer aus Österreich.',
@@ -103,21 +73,74 @@ INTRO = [
     'Hoi, ik ben Kev. Developer uit Oostenrijk.',
 ]
 
-def intro(snake_path):
-    """Typed intro line next to the snake svg, in the same colors (snake.svg -> intro.svg)."""
-    colors = re.search(r'--cs:[^;]+;.*?--c4:[^;}]+', open(snake_path).read()).group(0)
-    svg = (f'<svg viewBox="0 0 880 44" width="880" height="44" xmlns="http://www.w3.org/2000/svg">'
-           f'<style>:root{{{colors}}}{FONT_CSS}</style>' + typing(INTRO, 440, 30, size=22) + '</svg>')
-    open(snake_path.replace('snake', 'intro'), 'w').write(svg)
+def typed(key, line, cx, y, size, a, c, cycle):
+    """One line typed in from a, held, deleted from c; returns (css, svg)."""
+    pct = lambda ms: f'{ms / cycle * 100:.3f}'.rstrip('0').rstrip('.') + '%'
+    n, w = len(line), len(line) * size * 0.6  # JetBrains Mono advance is 0.6em
+    x0, b, d = cx - w / 2, a + n * TYPE, c + n * DELETE
+    # clip grows char by char, holds, shrinks char by char; cursor follows its edge
+    css = (f'@keyframes c{key}{{0%,{pct(a)}{{transform:scaleX(0);animation-timing-function:steps({n},end)}}'
+           f'{pct(b)},{pct(c)}{{transform:scaleX(1);animation-timing-function:steps({n},end)}}'
+           f'{pct(d)},100%{{transform:scaleX(0)}}}}.c{key}{{animation-name:c{key}}}'
+           f'@keyframes k{key}{{0%,{pct(a)}{{opacity:0}}{pct(a)}{{opacity:1;transform:translateX(0);animation-timing-function:steps({n},end)}}'
+           f'{pct(b)},{pct(c)}{{opacity:1;transform:translateX({w:.1f}px);animation-timing-function:steps({n},end)}}'
+           f'{pct(d)}{{opacity:1;transform:translateX(0)}}{pct(d + 1)},100%{{opacity:0}}}}.k{key}{{animation-name:k{key}}}')
+    svg = (f'<clipPath id="p{key}"><rect class="tc c{key}" x="{x0:.1f}" y="{y - size}" width="{w:.1f}" height="{size + 4}"/></clipPath>'
+           f'<text class="tt" font-size="{size}" x="{x0:.1f}" y="{y}" clip-path="url(#p{key})">{line}</text>'
+           f'<rect class="tk k{key}" x="{x0:.1f}" y="{y - size + 1}" width="2" height="{size + 2}" opacity="0"/>')
+    return css, svg
+
+def typing(cx, top_y, bottom_y, bottom_lines):
+    """Per language: intro types in and holds; then intro deletes while the counter types in;
+    counter holds and deletes; only then the next language starts."""
+    plan, t = [], 0
+    for i, top in enumerate(INTRO):
+        c1 = t + len(top) * TYPE + PAUSE
+        plan.append((f't{i}', top, top_y, 22, t, c1))
+        t = c1 + len(top) * DELETE
+        if bottom_lines:
+            bot = bottom_lines[i]
+            c2 = c1 + len(bot) * TYPE + PAUSE
+            plan.append((f'b{i}', bot, bottom_y, 13, c1, c2))
+            t = max(t, c2 + len(bot) * DELETE)
+        t += GAP
+    css = (f'.tt{{font-family:jbm,ui-monospace,monospace;fill:var(--c4);white-space:pre}}'
+           f'.tc,.tk{{transform-box:fill-box;transform-origin:0 0;animation:none {t}ms infinite}}.tk{{fill:var(--cs)}}')
+    out = ''
+    for key, line, y, size, a, c in plan:
+        c_, s_ = typed(key, line, cx, y, size, a, c, t)
+        css += c_
+        out += s_
+    return f'<style>{css}</style>' + out
+
+PALETTES = {  # (snake, 4 dot levels low -> high) for light and dark mode
+    'blau': (('#2563eb', '#bfdbfe', '#60a5fa', '#2563eb', '#1e3a8a'), ('#bfdbfe', '#172554', '#1e40af', '#3b82f6', '#93c5fd')),
+    'pink': (('#db2777', '#fbcfe8', '#f472b6', '#db2777', '#9d174d'), ('#fbcfe8', '#500724', '#9d174d', '#ec4899', '#f9a8d4')),
+    'lila': (('#9333ea', '#e9d5ff', '#c084fc', '#9333ea', '#6b21a8'), ('#e9d5ff', '#3b0764', '#6b21a8', '#a855f7', '#d8b4fe')),
+}
+PALETTE = random.SystemRandom().choice(list(PALETTES))
+
+def recolor(svg, dark):
+    snake, *dots = PALETTES[PALETTE][dark]
+    svg = re.sub(r'--cs:#\w+', f'--cs:{snake}', svg, count=1)
+    for i, c in enumerate(dots, 1):
+        svg = re.sub(rf'--c{i}:#\w+', f'--c{i}:{c}', svg, count=1)
+    return svg
+
+def stats_lines(stats):
+    pub, priv, avg = stats
+    return [l.format(pub + priv, pub, priv, f'{avg:.1f}') for l in LANGS]
 
 def process(path, stats):
-    svg = open(path).read()
+    svg = recolor(open(path).read(), 'dark' in path)
 
     # 1. remove the progress bar and crop it out of the viewBox
     svg = re.sub(r'<rect class="u[^"]*"[^>]*/>', '', svg)
     vx, vy, vw, vh = map(float, re.search(r'viewBox="([^"]+)"', svg).group(1).split())
     bottom = max(int(y) for y in re.findall(r'<rect class="c[^"]*" x="\d+" y="(\d+)"', svg)) + 12 + 16
     text_y = bottom + 8
+    vy -= 44  # room for the intro line above the grid
+    intro_y = vy + 30
     if stats:
         bottom += 24
     vh = bottom - vy
@@ -195,12 +218,11 @@ def process(path, stats):
     svg = svg.replace('</style>', ''.join(css) + '</style>', 1)
     first_snake = svg.index('<rect class="s')
     svg = svg[:first_snake] + ''.join(rects) + '<g class="sn">' + svg[first_snake:].replace('</svg>', '</g></svg>')
-    if stats:  # commit counter under the grid, typed out in different languages
-        svg = svg.replace('<g class="sn">', typing(stats_lines(stats), vx + vw / 2, text_y) + '<g class="sn">', 1)
-        svg = svg.replace('</style>', FONT_CSS + '</style>', 1)
+    # intro above the grid, commit counter below it, typed out in different languages
+    svg = svg.replace('<g class="sn">', typing(vx + vw / 2, intro_y, text_y, stats and stats_lines(stats)) + '<g class="sn">', 1)
+    svg = svg.replace('</style>', FONT_CSS + '</style>', 1)
     open(path, 'w').write(svg)
 
 stats = commit_stats()
 for f in sys.argv[1:]:
     process(f, stats)
-    intro(f)
