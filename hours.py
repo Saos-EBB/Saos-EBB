@@ -4,7 +4,7 @@ Usage: python hours.py OUT_DIR   -> OUT_DIR/hours.svg, OUT_DIR/hours-dark.svg
 Env:   STATS_TOKEN (or GITHUB_TOKEN), GITHUB_REPOSITORY_OWNER (default Saos-EBB),
        HOURS_MONTHS (default 6). Stdlib only.
 """
-import base64
+import random, base64
 import json
 import os
 import sys
@@ -104,10 +104,20 @@ def local_hour(iso):
 
 # ---------------------------------------------------------------- SVG
 
-THEMES = {  # (gradient blue -> pink -> lila, text colour, muted colour)
-    'light': (('#2563eb', '#db2777', '#9333ea'), '#57606a', '#8c959f'),
-    'dark': (('#93c5fd', '#f9a8d4', '#d8b4fe'), '#c9d1d9', '#8b949e'),
+THEMES = {  # (text colour, muted colour)
+    'light': ('#57606a', '#8c959f'),
+    'dark': ('#c9d1d9', '#8b949e'),
 }
+# same hues and levels as the contribution grid in gol.py (PALETTES dots, low -> high)
+HUES = {
+    'light': {'blau': ('#bfdbfe', '#60a5fa', '#2563eb', '#1e3a8a'),
+              'pink': ('#fbcfe8', '#f472b6', '#db2777', '#9d174d'),
+              'lila': ('#e9d5ff', '#c084fc', '#9333ea', '#6b21a8')},
+    'dark': {'blau': ('#172554', '#1e40af', '#3b82f6', '#93c5fd'),
+             'pink': ('#500724', '#9d174d', '#ec4899', '#f9a8d4'),
+             'lila': ('#3b0764', '#6b21a8', '#a855f7', '#d8b4fe')},
+}
+EMPTY = {'light': '#ebedf0', 'dark': '#161b22'}
 W, H = 880, 200
 PAD_X, TOP, BASE = 20, 44, 168
 BAR_MAX = BASE - TOP
@@ -119,8 +129,8 @@ def font_css():
     return f"@font-face{{font-family:jbm;src:url(data:font/woff2;base64,{data}) format('woff2')}}"
 
 
-def render(counts, months, theme, font):
-    (c1, c2, c3), text, muted = THEMES[theme]
+def render(counts, months, theme, font, hues):
+    text, muted = THEMES[theme]
     top = max(counts) or 1
     peak = counts.index(max(counts))
     slot = (W - 2 * PAD_X) / 24
@@ -130,9 +140,10 @@ def render(counts, months, theme, font):
         frac = n / top
         bh = max(2.0, BAR_MAX * frac) if n else 2.0
         x = PAD_X + h * slot + (slot - bw) / 2
-        op = 0.18 if not n else 0.35 + 0.65 * frac
+        # level 1-4 like a contribution cell, hue rolled per bar like the grid
+        fill = HUES[theme][hues[h]][min(3, int(frac * 4))] if n else EMPTY[theme]
         bars.append(f'<rect class="b" style="animation-delay:{h * 40}ms" x="{x:.1f}" y="{BASE - bh:.1f}" '
-                    f'width="{bw:.1f}" height="{bh:.1f}" rx="2" fill="url(#g)" fill-opacity="{op:.2f}">'
+                    f'width="{bw:.1f}" height="{bh:.1f}" rx="2" fill="{fill}">'
                     f'<title>{h:02d}:00 · {n} commits</title></rect>')
         if h % 3 == 0:
             labels.append(f'<text x="{x + bw / 2:.1f}" y="{BASE + 20}" text-anchor="middle">{h:02d}</text>')
@@ -148,9 +159,6 @@ def render(counts, months, theme, font):
     return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}" '
             f'role="img" aria-label="{title}; {note}">'
             f'<style>{css}</style>'
-            f'<defs><linearGradient id="g" gradientUnits="userSpaceOnUse" x1="{PAD_X}" y1="0" x2="{W - PAD_X}" y2="0">'
-            f'<stop offset="0" stop-color="{c1}"/><stop offset=".5" stop-color="{c2}"/>'
-            f'<stop offset="1" stop-color="{c3}"/></linearGradient></defs>'
             f'<text class="t" x="{PAD_X}" y="22">{title}</text>'
             f'<text x="{W - PAD_X}" y="22" text-anchor="end">{note}</text>'
             f'<line x1="{PAD_X}" y1="{BASE + 0.5}" x2="{W - PAD_X}" y2="{BASE + 0.5}" stroke="{muted}" stroke-opacity=".35"/>'
@@ -175,9 +183,11 @@ def main():
 
     os.makedirs(out, exist_ok=True)
     font = font_css()
+    rng = random.SystemRandom()
+    hues = [rng.choice(list(HUES['light'])) for _ in range(24)]  # same roll for light and dark
     for theme, name in (('light', 'hours.svg'), ('dark', 'hours-dark.svg')):
         with open(os.path.join(out, name), 'w', encoding='utf-8', newline='\n') as f:
-            f.write(render(counts, months, theme, font))
+            f.write(render(counts, months, theme, font, hues))
 
     peak = counts.index(max(counts))
     print(f'login {login} | since {since} | tz {"zoneinfo" if _TZ else "fallback CET/CEST"}')
