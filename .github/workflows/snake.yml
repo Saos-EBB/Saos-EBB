@@ -1,4 +1,4 @@
-name: Generate snake
+name: Generate profile games
 
 on:
   schedule:
@@ -24,9 +24,31 @@ jobs:
             dist/snake.svg?color_snake=#c026d3&color_dots=#ebedf0,#fbcfe8,#f472b6,#c026d3,#7e22ce
             dist/snake-dark.svg?color_snake=#f0abfc&color_dots=#161b22,#4a1d5c,#86198f,#d946ef,#f9a8d4
 
+      - name: Breakout + invaders
+        run: |
+          python3 games/breakout.py dist/breakout.svg dist/breakout-dark.svg
+          python3 games/invaders.py dist/invaders.svg dist/invaders-dark.svg
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - run: python3 gol.py dist/*.svg
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Roll this hour's game
+        run: |
+          g=$(shuf -n1 -e snake breakout invaders)
+          cp dist/$g.svg dist/game.svg
+          cp dist/$g-dark.svg dist/game-dark.svg
+          echo "$g" > dist/game.txt
+          echo "game: $g"
+
+      - name: Commit-hour chart
+        # needs a token that can read private repos; without it the committed snapshot is used
+        run: |
+          if [ -n "$STATS_TOKEN" ]; then python3 hours.py dist; else cp assets/hours.svg assets/hours-dark.svg dist/; fi
+        env:
+          STATS_TOKEN: ${{ secrets.STATS_TOKEN }}
 
       - uses: crazy-max/ghaction-github-pages@v3.1.0
         with:
