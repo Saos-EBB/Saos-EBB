@@ -1,5 +1,6 @@
-"""Post-process snk SVGs: drop the progress bar, then play Conway's Game of Life
-on the contribution grid once the snake is done. Usage: python3 gol.py dist/*.svg"""
+"""Post-process the game SVGs in dist/: palette, typed intro and commit counter for every game.
+Snake (snk output) additionally loses its progress bar and gets Conway's Game of Life after it.
+Usage: python3 gol.py dist/snake.svg dist/breakout-dark.svg ...  (game = file name before '-dark')"""
 import base64, random, re, sys, datetime, json, os, urllib.request
 
 GENS = 40          # generations to play
@@ -35,14 +36,6 @@ def commit_stats():
 LANGS = [  # total, public, private, per day
     '[ {} commits · {} public · {} private · Ø {}/day ]',
     '[ {} Commits · {} öffentlich · {} privat · Ø {}/Tag ]',
-    '[ {} commits · {} públicos · {} privados · Ø {}/día ]',
-    '[ {} commits · {} publics · {} privés · Ø {}/jour ]',
-    '[ {} commits · {} públicos · {} privados · Ø {}/dia ]',
-    '[ {} commit · {} pubblici · {} privati · Ø {}/giorno ]',
-    '[ {} коммитов · {} публичных · {} приватных · Ø {}/день ]',
-    '[ {} commitów · {} publicznych · {} prywatnych · Ø {}/dzień ]',
-    '[ {} commit · {} herkese açık · {} gizli · Ø {}/gün ]',
-    '[ {} commits · {} openbaar · {} privé · Ø {}/dag ]',
 ]
 TYPE, DELETE, PAUSE, GAP = 55, 25, 2500, 300  # ms per typed char, per deleted char, hold, gap
 
@@ -50,7 +43,6 @@ def _font_css():
     ranges = {  # unicode ranges as published by @fontsource/jetbrains-mono
         'latin': 'U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+2074,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD',
         'latin-ext': 'U+0100-02AF,U+0304,U+0308,U+0329,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF',
-        'cyrillic': 'U+0301,U+0400-045F,U+0490-0491,U+04B0-04B1,U+2116',
     }
     here = os.path.dirname(os.path.abspath(__file__))
     css = ''
@@ -63,14 +55,6 @@ FONT_CSS = _font_css()
 INTRO = [
     "Hey, I'm Kev. Developer from Austria.",
     'Hey, ich bin Kev. Developer aus Österreich.',
-    'Hola, soy Kev. Desarrollador de Austria.',
-    "Salut, je suis Kev. Développeur d'Autriche.",
-    'Olá, eu sou o Kev. Desenvolvedor da Áustria.',
-    "Ciao, sono Kev. Sviluppatore dall'Austria.",
-    'Привет, я Кев. Разработчик из Австрии.',
-    'Cześć, jestem Kev. Programista z Austrii.',
-    "Merhaba, ben Kev. Avusturya'dan geliştirici.",
-    'Hoi, ik ben Kev. Developer uit Oostenrijk.',
 ]
 
 def typed(key, line, cx, y, size, a, c, cycle):
@@ -141,13 +125,18 @@ def stats_lines(stats):
     pub, priv, avg = stats
     return [l.format(pub + priv, pub, priv, f'{avg:.1f}') for l in LANGS]
 
+# lowest y a game draws at (paddle/ship live below the grid); snake: derived from the cells
+GAME_BOTTOM = {'breakout': 134, 'invaders': 144}
+
 def process(path, stats):
-    svg = recolor(open(path).read(), 'dark' in path)
+    game = os.path.basename(path).removesuffix('.svg').removesuffix('-dark')
+    svg = recolor(open(path, encoding='utf-8').read(), 'dark' in path)
 
     # 1. remove the progress bar and crop it out of the viewBox
     svg = re.sub(r'<rect class="u[^"]*"[^>]*/>', '', svg)
     vx, vy, vw, vh = map(float, re.search(r'viewBox="([^"]+)"', svg).group(1).split())
     bottom = max(int(y) for y in re.findall(r'<rect class="c[^"]*" x="\d+" y="(\d+)"', svg)) + 12 + 16
+    bottom = max(bottom, GAME_BOTTOM.get(game, 0))
     text_y = bottom + 8
     vy -= 44  # room for the intro line above the grid
     intro_y = vy + 30
@@ -156,6 +145,14 @@ def process(path, stats):
     vh = bottom - vy
     svg = re.sub(r'viewBox="[^"]+" width="(\d+)" height="\d+"',
                  lambda m: f'viewBox="{vx:g} {vy:g} {vw:g} {vh:g}" width="{m.group(1)}" height="{vh:g}"', svg, count=1)
+
+    if game != 'snake':
+        anchor = svg.index('</style>') + len('</style>')
+        svg = svg[:anchor] + typing(vx + vw / 2, intro_y, text_y, stats and stats_lines(stats)) + svg[anchor:]
+        svg = random_hues(svg)
+        svg = svg.replace('</style>', FONT_CSS + '</style>', 1)
+        open(path, 'w', encoding='utf-8').write(svg)
+        return
 
     # 2. stretch the snake timeline so there is room for the game of life afterwards
     t = int(re.search(r'(\d+)ms', svg).group(1))
@@ -234,7 +231,7 @@ def process(path, stats):
     svg = svg.replace('<g class="sn">', typing(vx + vw / 2, intro_y, text_y, stats and stats_lines(stats)) + '<g class="sn">', 1)
     svg = random_hues(svg)
     svg = svg.replace('</style>', FONT_CSS + '</style>', 1)
-    open(path, 'w').write(svg)
+    open(path, 'w', encoding='utf-8').write(svg)
 
 stats = commit_stats()
 for f in sys.argv[1:]:
